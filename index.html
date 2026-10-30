@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>DigiSpots</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <style>
@@ -39,8 +39,6 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
 #stats dt{color:var(--mute);font-size:12px}
 #stats dd{margin:0;display:flex;flex-direction:column;font-variant-numeric:tabular-nums}
 #stats dd span{color:var(--mute);font-size:12px}
-.embed #stats{border-top:0;padding-top:0}
-.embed #stats dl{grid-auto-flow:column;gap:18px}
 #status{margin-top:auto;color:var(--mute);font-size:13px}
 #status b{color:var(--ink);font-variant-numeric:tabular-nums}
 #map{height:100%;background:var(--sea)}
@@ -48,34 +46,63 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
 .leaflet-control-attribution a{color:#8fa9b4}
 .leaflet-container{background:var(--sea)}
 @media(max-width:720px){#app{grid-template-columns:1fr;grid-template-rows:auto 1fr}aside{border-right:0;border-bottom:1px solid var(--line);flex-direction:row;flex-wrap:wrap}#status{margin:0}}
-/* embed mode: ?embed=1 puts the controls in a strip above the map and matches the site palette */
+#bar button,#mstatus{display:none}
+/* embed mode: ?embed=1 puts the controls in a strip above the map and matches the site palette (wide screens) */
+@media(min-width:721px){
 .embed #app{grid-template-columns:1fr;grid-template-rows:auto 1fr}
 .embed aside{border-right:0;border-bottom:1px solid var(--line);flex-direction:row;flex-wrap:wrap;align-items:flex-end;padding:10px 14px}
-.embed h1{display:none}
+.embed #bar{display:none}
 .embed #status{margin:0 0 0 auto}
 .embed #keywrap{width:260px}
+.embed #stats{border-top:0;padding-top:0}
+.embed #stats dl{grid-auto-flow:column;gap:18px}
+}
+/* phones: full-screen map with a bottom sheet for the controls */
+@media(max-width:720px){
+#app{display:block;position:relative;height:100vh;height:100dvh}
+#map{position:absolute;inset:0;height:auto}
+aside{position:fixed;left:0;right:0;bottom:0;z-index:1000;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-content:start;
+  max-height:80vh;max-height:80dvh;padding:0 16px max(16px,env(safe-area-inset-bottom));border:0;border-top:1px solid var(--line);
+  border-radius:14px 14px 0 0;box-shadow:0 -4px 18px rgba(0,0,0,.45);
+  transform:translateY(calc(100% - 56px - env(safe-area-inset-bottom,0px)));transition:transform .22s ease}
+aside.open{transform:none}
+aside:not(.open)>*:not(#bar){visibility:hidden}
+.full{grid-column:1/-1}
+#bar{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:10px;height:56px;margin:0 -16px;padding:0 16px;background:var(--panel);border-radius:14px 14px 0 0;cursor:pointer}
+#bar h1{font-size:18px}
+#mstatus{display:block;margin-right:auto;color:var(--mute);font-size:13px;font-variant-numeric:tabular-nums}
+#sheetbtn{display:block;background:var(--sea);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 14px;font:inherit;font-size:14px;min-height:40px}
+select,input:not([type=checkbox]){font-size:16px;min-height:44px}
+.chk{min-height:44px}
+.chk input{width:22px;height:22px}
+#key button{min-height:38px}
+#status{margin:0}
+.leaflet-bottom{bottom:calc(60px + env(safe-area-inset-bottom,0px))}
+.snr .b{font-size:13px;padding:3px 9px}
+}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <div id="app">
-<aside>
-  <h1>DigiSpots</h1>
+<aside id="panel">
+  <div id="bar" class="full"><h1>DigiSpots</h1><span id="mstatus"></span>
+    <button id="sheetbtn" type="button" aria-expanded="false" aria-controls="panel">Filters</button></div>
   <label>Band
     <select id="band"><option value="">All bands</option>
     <option>160m</option><option>80m</option><option>60m</option><option>40m</option><option>30m</option>
     <option>20m</option><option>17m</option><option>15m</option><option>12m</option><option>10m</option><option>6m</option></select></label>
   <label>Mode
     <select id="mode"><option value="">All modes</option><option>FT8</option><option>FT4</option><option>JT65</option><option>WSPR</option><option>CW</option></select></label>
-  <label>Callsign
+  <label class="full">Callsign
     <input id="call" placeholder="e.g. G4ABC" autocomplete="off" spellcheck="false"></label>
   <label>Direction (needs a callsign)
     <select id="dir"><option value="tx">Stations that hear me</option><option value="rx">Stations I hear</option><option value="">Both</option></select></label>
   <label>Show last
     <select id="mins"><option value="5">5 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
-  <label class="chk"><input type="checkbox" id="labels" checked> Show SNR labels at receivers</label>
-  <div id="keywrap"><h2>Band colours (click to filter)</h2><div id="key"></div></div>
-  <div id="stats">
+  <label class="chk full"><input type="checkbox" id="labels" checked> Show SNR labels at receivers</label>
+  <div id="keywrap" class="full"><h2>Band colours (click to filter)</h2><div id="key"></div></div>
+  <div id="stats" class="full">
   <h2>Highlights for these filters</h2>
   <dl>
     <dt>Best SNR</dt><dd id="s-snr">–</dd>
@@ -83,7 +110,7 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
     <dt>Stations heard</dt><dd id="s-st">–</dd>
   </dl>
 </div>
-<div id="status">Connecting…</div>
+<div id="status" class="full">Connecting…</div>
 </aside>
 <div id="map"></div>
 </div>
@@ -94,6 +121,15 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
   {attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',maxZoom:10,minZoom:2}).addTo(map);
 
 const $=id=>document.getElementById(id), layer=L.layerGroup().addTo(map);
+const panel=$("panel"),phone=()=>matchMedia("(max-width:720px)").matches;
+function sheet(open){
+  if(!phone())return;
+  const o=open===undefined?!panel.classList.contains("open"):open;
+  panel.classList.toggle("open",o);
+  $("sheetbtn").setAttribute("aria-expanded",String(o));$("sheetbtn").textContent=o?"Hide":"Filters";
+}
+$("bar").onclick=()=>sheet();
+map.on("click",()=>sheet(false));
 const P=new URLSearchParams(location.search);
 if(P.has("embed")){document.documentElement.style.cssText+="--sea:#0f172a;--panel:#1e293b;--line:#334155";document.body.classList.add("embed")}
 ["band","mode","call","dir","mins"].forEach(k=>{if(P.get(k)!==null)$(k).value=P.get(k)});
@@ -209,6 +245,7 @@ function prune(){
   if(want!==labelsOn){labelsOn=want;drawn.forEach(e=>want?showLab(e):hideLab(e))}
   else if(labelsOn)drawn.forEach(labText);
   stats();
+  $("mstatus").textContent=drawn.length.toLocaleString()+" paths";
   const hint=$("labels").checked&&!want?" (SNR labels show at "+LABEL_MAX+" paths or fewer; try a band or callsign filter)":"";
   $("status").innerHTML=`<b>${drawn.length.toLocaleString()}</b> paths shown`+hint+(ws.readyState===1?"":" (reconnecting…)");
 }
