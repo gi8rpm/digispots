@@ -69,6 +69,8 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
     <select id="mode"><option value="">All modes</option><option>FT8</option><option>FT4</option><option>JT65</option><option>WSPR</option><option>CW</option></select></label>
   <label>Callsign
     <input id="call" placeholder="e.g. G4ABC" autocomplete="off" spellcheck="false"></label>
+  <label>Direction (needs a callsign)
+    <select id="dir"><option value="tx">Stations that hear me</option><option value="rx">Stations I hear</option><option value="">Both</option></select></label>
   <label>Show last
     <select id="mins"><option value="5">5 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
   <label class="chk"><input type="checkbox" id="labels" checked> Show SNR labels at receivers</label>
@@ -94,9 +96,9 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
 const $=id=>document.getElementById(id), layer=L.layerGroup().addTo(map);
 const P=new URLSearchParams(location.search);
 if(P.has("embed")){document.documentElement.style.cssText+="--sea:#0f172a;--panel:#1e293b;--line:#334155";document.body.classList.add("embed")}
-["band","mode","call","mins"].forEach(k=>{if(P.get(k))$(k).value=P.get(k)});
+["band","mode","call","dir","mins"].forEach(k=>{if(P.get(k)!==null)$(k).value=P.get(k)});
 let drawn=[], total=0;
-const filter=()=>({band:$("band").value,mode:$("mode").value,call:$("call").value.trim()});
+const filter=()=>({band:$("band").value,mode:$("mode").value,call:$("call").value.trim(),dir:$("dir").value});
 
 function grid(g){
   if(!g||g.length<4)return null; g=g.toUpperCase();
@@ -166,18 +168,23 @@ function showLab(e){
     const el=document.createElement("div"),b=document.createElement("span");
     b.className="b";b.style.setProperty("--c",e.c);el.append(b);e.labEl=b;
     e.lab=L.marker(e.end,{icon:L.divIcon({className:"snr",html:el,iconSize:[0,0],iconAnchor:[0,0]}),zIndexOffset:500});
-    e.lab.bindTooltip(()=>tip(e.s,e.d,e.br),{direction:"top",offset:[22,-24],opacity:1});
+    e.lab.bindTooltip(()=>tip(e.s,e.d,e.br,e.rxm),{direction:"top",offset:[22,-24],opacity:1});
   }
   labText(e);layer.addLayer(e.lab);
 }
 const hideLab=e=>{if(e.lab)layer.removeLayer(e.lab)};
-function tip(s,d,br){ // DOM + textContent only: callsigns come from the network
+function isRx(s){ // true when the filtered callsign is the receiver, so the other station is the sender
+  const me=$("call").value.trim().toUpperCase();
+  return !!me&&$("dir").value!=="tx"&&s.rc.toUpperCase().includes(me)&&!s.sc.toUpperCase().includes(me);
+}
+function tip(s,d,br,rxm){ // DOM + textContent only: callsigns come from the network
   const el=document.createElement("div"),row=(t,c)=>{const x=document.createElement("div");if(c)x.className=c;x.textContent=t;el.append(x)};
   el.className="tip";
-  row(s.rc,"tip-call");
-  row("Grid "+s.rl,"tip-dim");
+  const o=rxm?{c:s.sc,g:s.sl,by:s.rc,bg:s.rl}:{c:s.rc,g:s.rl,by:s.sc,bg:s.sl};
+  row(o.c,"tip-call");
+  row("Grid "+o.g,"tip-dim");
   row(s.snr!=null?(s.snr>0?"+":"")+s.snr+" dB SNR":"SNR not reported","tip-snr");
-  row("Heard "+s.sc+" ("+s.sl+")");
+  row((rxm?"Heard by ":"Heard ")+o.by+" ("+o.bg+")");
   row([s.b,s.md,s.f?(s.f/1e6).toFixed(3)+" MHz":null].filter(Boolean).join(", "));
   row(Math.round(d).toLocaleString()+" km ("+Math.round(d*0.621371).toLocaleString()+" mi), bearing "+Math.round(br)+"°","tip-dim");
   row(new Date(s.t*1000).toISOString().slice(11,16)+" UTC","tip-dim");
@@ -185,11 +192,11 @@ function tip(s,d,br){ // DOM + textContent only: callsigns come from the network
 }
 function draw(s){
   const a=grid(s.sl),b=grid(s.rl); if(!a||!b)return;
-  const pts=arc(a,b),c=bandColor(s.b),d=km(a,b),br=brg(a,b),end=pts[pts.length-1];
+  const pts=arc(a,b),c=bandColor(s.b),d=km(a,b),br=brg(a,b),rxm=isRx(s),end=rxm?pts[0]:pts[pts.length-1];
   const line=L.polyline(pts,{color:c,weight:1.4,opacity:.6,interactive:false}).addTo(layer);
   const dot=L.circleMarker(end,{radius:3.5,color:"#0f2530",weight:1,fillColor:c,fillOpacity:.95}).addTo(layer);
-  dot.bindTooltip(()=>tip(s,d,br),{direction:"top",offset:[0,-4],opacity:1});
-  const e={t:s.t,line,dot,s,d,br,end,c};
+  dot.bindTooltip(()=>tip(s,d,br,rxm),{direction:"top",offset:[0,-4],opacity:1});
+  const e={t:s.t,line,dot,s,d,br,end,c,rxm};
   drawn.push(e); total++;
   if(labelsOn&&drawn.length<=LABEL_MAX)showLab(e);
 }
@@ -219,7 +226,7 @@ function connect(){
   ws.onclose=()=>setTimeout(connect,3000);
 }
 connect();
-["band","mode","mins"].forEach(i=>$(i).onchange=reload);
+["band","mode","dir","mins"].forEach(i=>$(i).onchange=reload);
 $("labels").onchange=prune;
 let tm;$("call").oninput=()=>{clearTimeout(tm);tm=setTimeout(reload,400)};
 setInterval(prune,5000); reload();

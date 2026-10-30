@@ -40,7 +40,11 @@ def matches(s: dict, f: dict) -> bool:
     if f.get("band") and s["b"] != f["band"]: return False
     if f.get("mode") and s["md"] != f["mode"]: return False
     c = (f.get("call") or "").upper()
-    return not c or c in s["sc"].upper() or c in s["rc"].upper()
+    if not c: return True
+    d = f.get("dir")  # "tx": call is the sender, "rx": call is the receiver, else either
+    if d == "tx": return c in s["sc"].upper()
+    if d == "rx": return c in s["rc"].upper()
+    return c in s["sc"].upper() or c in s["rc"].upper()
 
 
 async def ingest():
@@ -99,11 +103,15 @@ app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/api/spots")
-async def spots(band: str = "", mode: str = "", call: str = "", minutes: int = 15, limit: int = 1500):
+async def spots(band: str = "", mode: str = "", call: str = "", dir: str = "", minutes: int = 15, limit: int = 1500):
     q, args = "SELECT t,b,md,f,snr,sc,sl,rc,rl FROM spots WHERE t > ?", [int(time.time()) - min(minutes, TTL // 60) * 60]
     if band: q += " AND b=?"; args.append(band)
     if mode: q += " AND md=?"; args.append(mode)
-    if call: q += " AND (sc LIKE ? OR rc LIKE ?)"; args += [f"%{call.upper()}%"] * 2
+    if call:
+        like = f"%{call.upper()}%"
+        if dir == "tx": q += " AND sc LIKE ?"; args.append(like)
+        elif dir == "rx": q += " AND rc LIKE ?"; args.append(like)
+        else: q += " AND (sc LIKE ? OR rc LIKE ?)"; args += [like, like]
     q += " ORDER BY t DESC LIMIT ?"; args.append(min(limit, 5000))
     async with aiosqlite.connect(DB) as db:
         rows = await (await db.execute(q, args)).fetchall()
