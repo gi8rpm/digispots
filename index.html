@@ -6,8 +6,7 @@
 <title>DigiSpots</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <style>
-:root{--sea:#0f2530;--panel:#173340;--line:#2a4a5a;--ink:#e6eef0;--mute:#8fa9b4;
- --weak:#5b7fd6;--mid:#38b8a4;--strong:#f4d36b}
+:root{--sea:#0f2530;--panel:#173340;--line:#2a4a5a;--ink:#e6eef0;--mute:#8fa9b4;--mid:#38b8a4}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;background:var(--sea);color:var(--ink);font:15px/1.4 "Segoe UI",system-ui,sans-serif}
 #app{display:grid;grid-template-columns:280px 1fr;height:100%}
@@ -16,8 +15,18 @@ h1{font-size:20px;margin:0;font-weight:600;letter-spacing:.01em}
 label{display:flex;flex-direction:column;gap:4px;color:var(--mute);font-size:13px}
 select,input{background:var(--sea);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
 select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-offset:1px}
-.ramp{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--weak),var(--mid),var(--strong))}
-.ramp+div{display:flex;justify-content:space-between;color:var(--mute);font-size:12px}
+.chk{flex-direction:row;align-items:center;gap:8px;cursor:pointer;color:var(--ink)}
+.chk input{padding:0;width:auto;accent-color:var(--mid)}
+#keywrap h2{font-size:13px;margin:0 0 8px;color:var(--mute);font-weight:500}
+#key{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+#key>*{display:flex;align-items:center;gap:6px;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:inherit;font-size:12px}
+#key button{cursor:pointer}
+#key button:hover{border-color:var(--mute)}
+#key button[aria-pressed=true]{border-color:var(--ink);background:var(--sea)}
+#key button:focus-visible{outline:2px solid var(--mid);outline-offset:1px}
+#key i{width:10px;height:10px;border-radius:50%;flex:none}
+.snr{width:0;height:0}
+.snr .b{position:absolute;left:-6px;bottom:7px;white-space:nowrap;background:var(--panel);color:var(--ink);border:1.5px solid var(--c);border-radius:9px 9px 9px 2px;padding:1px 7px;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;box-shadow:0 1px 4px rgba(0,0,0,.45);cursor:pointer}
 .leaflet-tooltip{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.4);padding:8px 10px;font-size:13px;line-height:1.35}
 .leaflet-tooltip-top:before{border-top-color:var(--line)}
 .tip div{white-space:nowrap}
@@ -44,7 +53,7 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
 .embed aside{border-right:0;border-bottom:1px solid var(--line);flex-direction:row;flex-wrap:wrap;align-items:flex-end;padding:10px 14px}
 .embed h1{display:none}
 .embed #status{margin:0 0 0 auto}
-.embed aside>div:has(.ramp){width:180px}
+.embed #keywrap{width:260px}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -62,7 +71,8 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
     <input id="call" placeholder="e.g. G4ABC" autocomplete="off" spellcheck="false"></label>
   <label>Show last
     <select id="mins"><option value="5">5 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
-  <div><div class="ramp"></div><div><span>−25 dB</span><span>0</span><span>+10 dB</span></div></div>
+  <label class="chk"><input type="checkbox" id="labels" checked> Show SNR labels at receivers</label>
+  <div id="keywrap"><h2>Band colours (click to filter)</h2><div id="key"></div></div>
   <div id="stats">
   <h2>Highlights for these filters</h2>
   <dl>
@@ -133,12 +143,35 @@ function stats(){
       far&&far.s.sc+" to "+far.s.rc+(far.s.b?", "+far.s.b:""));
   set("s-st",calls.size?calls.size.toLocaleString():"",calls.size?"in "+drawn.length.toLocaleString()+" paths":"");
 }
-function color(snr){
-  const t=Math.max(0,Math.min(1,((snr??-10)+25)/35));
-  const c=[[91,127,214],[56,184,164],[244,211,107]],s=t*2,i=Math.min(1,Math.floor(s)),f=s-i;
-  return "rgb("+c[i].map((v,k)=>Math.round(v+(c[i+1][k]-v)*f)).join(",")+")";
+const BANDS={"160m":"#f87171","80m":"#fb923c","60m":"#c8a27a","40m":"#facc15","30m":"#a3e635","20m":"#22d3ee",
+  "17m":"#60a5fa","15m":"#a78bfa","12m":"#e879f9","10m":"#f472b6","6m":"#ffffff"};
+const bandColor=b=>BANDS[b]||"#94a3b8";
+for(const [b,c] of [...Object.entries(BANDS),["Other","#94a3b8"]]){
+  const el=document.createElement(b==="Other"?"div":"button"),dot=document.createElement("i");
+  dot.style.background=c;el.append(dot,b);el.dataset.band=b;
+  if(b!=="Other"){el.type="button";el.setAttribute("aria-pressed","false");
+    el.onclick=()=>{$("band").value=$("band").value===b?"":b;reload()}}
+  $("key").append(el);
 }
-function tip(s,d){ // DOM + textContent only: callsigns come from the network
+const syncKey=()=>$("key").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",String($("band").value===b.dataset.band)));
+function brg(a,b){
+  const r=Math.PI/180,p1=a[0]*r,p2=b[0]*r,dl=(b[1]-a[1])*r;
+  return (Math.atan2(Math.sin(dl)*Math.cos(p2),Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl))/r+360)%360;
+}
+const age=t=>{const m=Math.floor((Date.now()/1000-t)/60);return m<1?"now":m<120?m+"m":Math.floor(m/60)+"h"};
+const LABEL_MAX=250;let labelsOn=false;
+function labText(e){if(!e.labEl)return;e.labEl.textContent=age(e.s.t)+" "+(e.s.snr!=null?(e.s.snr>0?"+":"")+e.s.snr+"dB":"?")}
+function showLab(e){
+  if(!e.lab){
+    const el=document.createElement("div"),b=document.createElement("span");
+    b.className="b";b.style.setProperty("--c",e.c);el.append(b);e.labEl=b;
+    e.lab=L.marker(e.end,{icon:L.divIcon({className:"snr",html:el,iconSize:[0,0],iconAnchor:[0,0]}),zIndexOffset:500});
+    e.lab.bindTooltip(()=>tip(e.s,e.d,e.br),{direction:"top",offset:[22,-24],opacity:1});
+  }
+  labText(e);layer.addLayer(e.lab);
+}
+const hideLab=e=>{if(e.lab)layer.removeLayer(e.lab)};
+function tip(s,d,br){ // DOM + textContent only: callsigns come from the network
   const el=document.createElement("div"),row=(t,c)=>{const x=document.createElement("div");if(c)x.className=c;x.textContent=t;el.append(x)};
   el.className="tip";
   row(s.rc,"tip-call");
@@ -146,28 +179,34 @@ function tip(s,d){ // DOM + textContent only: callsigns come from the network
   row(s.snr!=null?(s.snr>0?"+":"")+s.snr+" dB SNR":"SNR not reported","tip-snr");
   row("Heard "+s.sc+" ("+s.sl+")");
   row([s.b,s.md,s.f?(s.f/1e6).toFixed(3)+" MHz":null].filter(Boolean).join(", "));
-  row(Math.round(d).toLocaleString()+" km ("+Math.round(d*0.621371).toLocaleString()+" mi)","tip-dim");
+  row(Math.round(d).toLocaleString()+" km ("+Math.round(d*0.621371).toLocaleString()+" mi), bearing "+Math.round(br)+"°","tip-dim");
   row(new Date(s.t*1000).toISOString().slice(11,16)+" UTC","tip-dim");
   return el;
 }
 function draw(s){
   const a=grid(s.sl),b=grid(s.rl); if(!a||!b)return;
-  const pts=arc(a,b),c=color(s.snr),d=km(a,b);
-  const line=L.polyline(pts,{color:c,weight:1.2,opacity:.55,interactive:false}).addTo(layer);
-  const dot=L.circleMarker(pts[pts.length-1],{radius:3.5,color:"#0f2530",weight:1,fillColor:c,fillOpacity:.95}).addTo(layer);
-  dot.bindTooltip(()=>tip(s,d),{direction:"top",offset:[0,-4],opacity:1});
-  drawn.push({t:s.t,line,dot,s,d}); total++;
+  const pts=arc(a,b),c=bandColor(s.b),d=km(a,b),br=brg(a,b),end=pts[pts.length-1];
+  const line=L.polyline(pts,{color:c,weight:1.4,opacity:.6,interactive:false}).addTo(layer);
+  const dot=L.circleMarker(end,{radius:3.5,color:"#0f2530",weight:1,fillColor:c,fillOpacity:.95}).addTo(layer);
+  dot.bindTooltip(()=>tip(s,d,br),{direction:"top",offset:[0,-4],opacity:1});
+  const e={t:s.t,line,dot,s,d,br,end,c};
+  drawn.push(e); total++;
+  if(labelsOn&&drawn.length<=LABEL_MAX)showLab(e);
 }
-function drop(){const e=drawn.shift();layer.removeLayer(e.line);layer.removeLayer(e.dot)}
+function drop(){const e=drawn.shift();layer.removeLayer(e.line);layer.removeLayer(e.dot);hideLab(e)}
 function prune(){
   const cut=Date.now()/1000-(+$("mins").value)*60;
   while(drawn.length&&drawn[0].t<cut)drop();
   while(drawn.length>4000)drop();
+  const want=$("labels").checked&&drawn.length<=LABEL_MAX;
+  if(want!==labelsOn){labelsOn=want;drawn.forEach(e=>want?showLab(e):hideLab(e))}
+  else if(labelsOn)drawn.forEach(labText);
   stats();
-  $("status").innerHTML=`<b>${drawn.length.toLocaleString()}</b> paths shown`+(ws.readyState===1?"":" · reconnecting…");
+  const hint=$("labels").checked&&!want?" (SNR labels show at "+LABEL_MAX+" paths or fewer; try a band or callsign filter)":"";
+  $("status").innerHTML=`<b>${drawn.length.toLocaleString()}</b> paths shown`+hint+(ws.readyState===1?"":" (reconnecting…)");
 }
 async function reload(){
-  layer.clearLayers();drawn=[];
+  layer.clearLayers();drawn=[];labelsOn=false;syncKey();
   const f=filter(),q=new URLSearchParams({...f,minutes:$("mins").value,limit:3000});
   try{(await (await fetch("/api/spots?"+q)).json()).reverse().forEach(draw)}catch(e){}
   if(ws.readyState===1)ws.send(JSON.stringify(f)); prune();
@@ -181,6 +220,7 @@ function connect(){
 }
 connect();
 ["band","mode","mins"].forEach(i=>$(i).onchange=reload);
+$("labels").onchange=prune;
 let tm;$("call").oninput=()=>{clearTimeout(tm);tm=setTimeout(reload,400)};
 setInterval(prune,5000); reload();
 </script>
