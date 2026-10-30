@@ -18,6 +18,20 @@ select,input{background:var(--sea);color:var(--ink);border:1px solid var(--line)
 select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-offset:1px}
 .ramp{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--weak),var(--mid),var(--strong))}
 .ramp+div{display:flex;justify-content:space-between;color:var(--mute);font-size:12px}
+.leaflet-tooltip{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.4);padding:8px 10px;font-size:13px;line-height:1.35}
+.leaflet-tooltip-top:before{border-top-color:var(--line)}
+.tip div{white-space:nowrap}
+.tip .tip-call{font-weight:600;font-size:15px;margin-bottom:2px}
+.tip .tip-snr{font-weight:600}
+.tip .tip-dim{color:var(--mute)}
+#stats{border-top:1px solid var(--line);padding-top:12px}
+#stats h2{font-size:13px;margin:0 0 8px;color:var(--mute);font-weight:500}
+#stats dl{margin:0;display:grid;gap:10px}
+#stats dt{color:var(--mute);font-size:12px}
+#stats dd{margin:0;display:flex;flex-direction:column;font-variant-numeric:tabular-nums}
+#stats dd span{color:var(--mute);font-size:12px}
+.embed #stats{border-top:0;padding-top:0}
+.embed #stats dl{grid-auto-flow:column;gap:18px}
 #status{margin-top:auto;color:var(--mute);font-size:13px}
 #status b{color:var(--ink);font-variant-numeric:tabular-nums}
 #map{height:100%;background:var(--sea)}
@@ -49,13 +63,21 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
   <label>Show last
     <select id="mins"><option value="5">5 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
   <div><div class="ramp"></div><div><span>−25 dB</span><span>0</span><span>+10 dB</span></div></div>
-  <div id="status">Connecting…</div>
+  <div id="stats">
+  <h2>Highlights for these filters</h2>
+  <dl>
+    <dt>Best SNR</dt><dd id="s-snr">–</dd>
+    <dt>Furthest path</dt><dd id="s-far">–</dd>
+    <dt>Stations heard</dt><dd id="s-st">–</dd>
+  </dl>
+</div>
+<div id="status">Connecting…</div>
 </aside>
 <div id="map"></div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
-const map=L.map("map",{worldCopyJump:true,zoomControl:true}).setView([30,10],2);
+const map=L.map("map",{worldCopyJump:true,zoomControl:true,preferCanvas:true}).setView([30,10],2);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
   {attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',maxZoom:10,minZoom:2}).addTo(map);
 
@@ -88,20 +110,60 @@ function arc(a,b,n=28){ // great-circle path, longitudes unwrapped to avoid map-
   }
   return pts;
 }
+function km(a,b){
+  const r=Math.PI/180,dl=(b[0]-a[0])*r,dn=(b[1]-a[1])*r;
+  const h=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dn/2)**2;
+  return 12742*Math.asin(Math.sqrt(h));
+}
+function stats(){
+  let best=null,far=null;const calls=new Set();
+  for(const e of drawn){
+    calls.add(e.s.sc);calls.add(e.s.rc);
+    if(e.s.snr!=null&&(!best||e.s.snr>best.snr))best=e.s;
+    if(!far||e.d>far.d)far=e;
+  }
+  const set=(id,main,sub)=>{ // textContent only: callsigns come from the network
+    const el=$(id);el.textContent="";
+    if(!main){el.textContent="–";return}
+    const b=document.createElement("b"),s=document.createElement("span");
+    b.textContent=main;s.textContent=sub;el.append(b,s);
+  };
+  set("s-snr",best&&(best.snr>0?"+":"")+best.snr+" dB",best&&best.sc+" to "+best.rc+(best.b?", "+best.b:""));
+  set("s-far",far&&Math.round(far.d).toLocaleString()+" km ("+Math.round(far.d*0.621371).toLocaleString()+" mi)",
+      far&&far.s.sc+" to "+far.s.rc+(far.s.b?", "+far.s.b:""));
+  set("s-st",calls.size?calls.size.toLocaleString():"",calls.size?"in "+drawn.length.toLocaleString()+" paths":"");
+}
 function color(snr){
   const t=Math.max(0,Math.min(1,((snr??-10)+25)/35));
   const c=[[91,127,214],[56,184,164],[244,211,107]],s=t*2,i=Math.min(1,Math.floor(s)),f=s-i;
   return "rgb("+c[i].map((v,k)=>Math.round(v+(c[i+1][k]-v)*f)).join(",")+")";
 }
+function tip(s,d){ // DOM + textContent only: callsigns come from the network
+  const el=document.createElement("div"),row=(t,c)=>{const x=document.createElement("div");if(c)x.className=c;x.textContent=t;el.append(x)};
+  el.className="tip";
+  row(s.rc,"tip-call");
+  row("Grid "+s.rl,"tip-dim");
+  row(s.snr!=null?(s.snr>0?"+":"")+s.snr+" dB SNR":"SNR not reported","tip-snr");
+  row("Heard "+s.sc+" ("+s.sl+")");
+  row([s.b,s.md,s.f?(s.f/1e6).toFixed(3)+" MHz":null].filter(Boolean).join(", "));
+  row(Math.round(d).toLocaleString()+" km ("+Math.round(d*0.621371).toLocaleString()+" mi)","tip-dim");
+  row(new Date(s.t*1000).toISOString().slice(11,16)+" UTC","tip-dim");
+  return el;
+}
 function draw(s){
   const a=grid(s.sl),b=grid(s.rl); if(!a||!b)return;
-  const line=L.polyline(arc(a,b),{color:color(s.snr),weight:1.2,opacity:.55,interactive:false}).addTo(layer);
-  line.bindTooltip=null; drawn.push({t:s.t,line}); total++;
+  const pts=arc(a,b),c=color(s.snr),d=km(a,b);
+  const line=L.polyline(pts,{color:c,weight:1.2,opacity:.55,interactive:false}).addTo(layer);
+  const dot=L.circleMarker(pts[pts.length-1],{radius:3.5,color:"#0f2530",weight:1,fillColor:c,fillOpacity:.95}).addTo(layer);
+  dot.bindTooltip(()=>tip(s,d),{direction:"top",offset:[0,-4],opacity:1});
+  drawn.push({t:s.t,line,dot,s,d}); total++;
 }
+function drop(){const e=drawn.shift();layer.removeLayer(e.line);layer.removeLayer(e.dot)}
 function prune(){
   const cut=Date.now()/1000-(+$("mins").value)*60;
-  while(drawn.length&&drawn[0].t<cut){layer.removeLayer(drawn.shift().line)}
-  while(drawn.length>4000){layer.removeLayer(drawn.shift().line)}
+  while(drawn.length&&drawn[0].t<cut)drop();
+  while(drawn.length>4000)drop();
+  stats();
   $("status").innerHTML=`<b>${drawn.length.toLocaleString()}</b> paths shown`+(ws.readyState===1?"":" · reconnecting…");
 }
 async function reload(){
