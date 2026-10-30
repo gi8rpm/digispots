@@ -21,6 +21,8 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
 #status{margin-top:auto;color:var(--mute);font-size:13px}
 #status b{color:var(--ink);font-variant-numeric:tabular-nums}
 #map{height:100%;background:var(--sea)}
+.leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.85) saturate(.6)}
+.leaflet-control-attribution a{color:#8fa9b4}
 .leaflet-container{background:var(--sea)}
 @media(max-width:720px){#app{grid-template-columns:1fr;grid-template-rows:auto 1fr}aside{border-right:0;border-bottom:1px solid var(--line);flex-direction:row;flex-wrap:wrap}#status{margin:0}}
 /* embed mode: ?embed=1 puts the controls in a strip above the map and matches the site palette */
@@ -54,8 +56,8 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-of
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
 const map=L.map("map",{worldCopyJump:true,zoomControl:true}).setView([30,10],2);
-L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png",
-  {attribution:"© OpenStreetMap, © CARTO",maxZoom:8,minZoom:2}).addTo(map);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  {attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',maxZoom:10,minZoom:2}).addTo(map);
 
 const $=id=>document.getElementById(id), layer=L.layerGroup().addTo(map);
 const P=new URLSearchParams(location.search);
