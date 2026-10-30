@@ -1,0 +1,3 @@
+.venv/
+spots.db*
+__pycache__/
