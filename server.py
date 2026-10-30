@@ -4,12 +4,12 @@ Run:  uvicorn server:app --host 127.0.0.1 --port 8000
 Config via env vars (see below).
 """
 import asyncio, json, os, time
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 import aiomqtt, aiosqlite
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 HOST = os.getenv("MQTT_HOST", "mqtt.pskreporter.info")
 PORT = int(os.getenv("MQTT_PORT", "1884"))                 # 1883 TCP, 1884 TLS
@@ -127,8 +127,12 @@ async def ws_endpoint(ws: WebSocket):
         clients.pop(ws, None)
 
 
+BASE = Path(__file__).parent
+PAGE = BASE / "index.html"
+if not PAGE.exists():
+    PAGE = BASE / "static" / "index.html"
+
+
 @app.get("/")
 async def index():
-    return FileResponse("static/index.html")
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
+    return FileResponse(PAGE)

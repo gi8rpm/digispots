@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DigiSpots</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+:root{--sea:#0f2530;--panel:#173340;--line:#2a4a5a;--ink:#e6eef0;--mute:#8fa9b4;
+ --weak:#5b7fd6;--mid:#38b8a4;--strong:#f4d36b}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--sea);color:var(--ink);font:15px/1.4 "Segoe UI",system-ui,sans-serif}
+#app{display:grid;grid-template-columns:280px 1fr;height:100%}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:18px;display:flex;flex-direction:column;gap:14px;overflow:auto}
+h1{font-size:20px;margin:0;font-weight:600;letter-spacing:.01em}
+label{display:flex;flex-direction:column;gap:4px;color:var(--mute);font-size:13px}
+select,input{background:var(--sea);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
+select:focus-visible,input:focus-visible{outline:2px solid var(--mid);outline-offset:1px}
+.ramp{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--weak),var(--mid),var(--strong))}
+.ramp+div{display:flex;justify-content:space-between;color:var(--mute);font-size:12px}
+#status{margin-top:auto;color:var(--mute);font-size:13px}
+#status b{color:var(--ink);font-variant-numeric:tabular-nums}
+#map{height:100%;background:var(--sea)}
+.leaflet-container{background:var(--sea)}
+@media(max-width:720px){#app{grid-template-columns:1fr;grid-template-rows:auto 1fr}aside{border-right:0;border-bottom:1px solid var(--line);flex-direction:row;flex-wrap:wrap}#status{margin:0}}
+/* embed mode: ?embed=1 puts the controls in a strip above the map and matches the site palette */
+.embed #app{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+.embed aside{border-right:0;border-bottom:1px solid var(--line);flex-direction:row;flex-wrap:wrap;align-items:flex-end;padding:10px 14px}
+.embed h1{display:none}
+.embed #status{margin:0 0 0 auto}
+.embed aside>div:has(.ramp){width:180px}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+<aside>
+  <h1>DigiSpots</h1>
+  <label>Band
+    <select id="band"><option value="">All bands</option>
+    <option>160m</option><option>80m</option><option>60m</option><option>40m</option><option>30m</option>
+    <option>20m</option><option>17m</option><option>15m</option><option>12m</option><option>10m</option><option>6m</option></select></label>
+  <label>Mode
+    <select id="mode"><option value="">All modes</option><option>FT8</option><option>FT4</option><option>JT65</option><option>WSPR</option><option>CW</option></select></label>
+  <label>Callsign
+    <input id="call" placeholder="e.g. G4ABC" autocomplete="off" spellcheck="false"></label>
+  <label>Show last
+    <select id="mins"><option value="5">5 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
+  <div><div class="ramp"></div><div><span>−25 dB</span><span>0</span><span>+10 dB</span></div></div>
+  <div id="status">Connecting…</div>
+</aside>
+<div id="map"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+const map=L.map("map",{worldCopyJump:true,zoomControl:true}).setView([30,10],2);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png",
+  {attribution:"© OpenStreetMap, © CARTO",maxZoom:8,minZoom:2}).addTo(map);
+
+const $=id=>document.getElementById(id), layer=L.layerGroup().addTo(map);
+const P=new URLSearchParams(location.search);
+if(P.has("embed")){document.documentElement.style.cssText+="--sea:#0f172a;--panel:#1e293b;--line:#334155";document.body.classList.add("embed")}
+["band","mode","call","mins"].forEach(k=>{if(P.get(k))$(k).value=P.get(k)});
+let drawn=[], total=0;
+const filter=()=>({band:$("band").value,mode:$("mode").value,call:$("call").value.trim()});
+
+function grid(g){
+  if(!g||g.length<4)return null; g=g.toUpperCase();
+  let lon=(g.charCodeAt(0)-65)*20-180+(+g[2])*2, lat=(g.charCodeAt(1)-65)*10-90+(+g[3]);
+  if(g.length>=6){lon+=(g.charCodeAt(4)-65)/12+1/24;lat+=(g.charCodeAt(5)-65)/24+1/48}
+  else{lon+=1;lat+=.5}
+  return isNaN(lat+lon)?null:[lat,lon];
+}
+function arc(a,b,n=28){ // great-circle path, longitudes unwrapped to avoid map-wide lines
+  const r=Math.PI/180,[la1,lo1,la2,lo2]=[a[0]*r,a[1]*r,b[0]*r,b[1]*r];
+  const d=2*Math.asin(Math.sqrt(Math.sin((la2-la1)/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin((lo2-lo1)/2)**2));
+  if(d<1e-6)return[a,b];
+  const pts=[];let prev=a[1];
+  for(let i=0;i<=n;i++){
+    const f=i/n,A=Math.sin((1-f)*d)/Math.sin(d),B=Math.sin(f*d)/Math.sin(d);
+    const x=A*Math.cos(la1)*Math.cos(lo1)+B*Math.cos(la2)*Math.cos(lo2);
+    const y=A*Math.cos(la1)*Math.sin(lo1)+B*Math.cos(la2)*Math.sin(lo2);
+    const z=A*Math.sin(la1)+B*Math.sin(la2);
+    let lon=Math.atan2(y,x)/r; while(lon-prev>180)lon-=360; while(lon-prev<-180)lon+=360;
+    prev=lon; pts.push([Math.atan2(z,Math.hypot(x,y))/r,lon]);
+  }
+  return pts;
+}
+function color(snr){
+  const t=Math.max(0,Math.min(1,((snr??-10)+25)/35));
+  const c=[[91,127,214],[56,184,164],[244,211,107]],s=t*2,i=Math.min(1,Math.floor(s)),f=s-i;
+  return "rgb("+c[i].map((v,k)=>Math.round(v+(c[i+1][k]-v)*f)).join(",")+")";
+}
+function draw(s){
+  const a=grid(s.sl),b=grid(s.rl); if(!a||!b)return;
+  const line=L.polyline(arc(a,b),{color:color(s.snr),weight:1.2,opacity:.55,interactive:false}).addTo(layer);
+  line.bindTooltip=null; drawn.push({t:s.t,line}); total++;
+}
+function prune(){
+  const cut=Date.now()/1000-(+$("mins").value)*60;
+  while(drawn.length&&drawn[0].t<cut){layer.removeLayer(drawn.shift().line)}
+  while(drawn.length>4000){layer.removeLayer(drawn.shift().line)}
+  $("status").innerHTML=`<b>${drawn.length.toLocaleString()}</b> paths shown`+(ws.readyState===1?"":" · reconnecting…");
+}
+async function reload(){
+  layer.clearLayers();drawn=[];
+  const f=filter(),q=new URLSearchParams({...f,minutes:$("mins").value,limit:3000});
+  try{(await (await fetch("/api/spots?"+q)).json()).reverse().forEach(draw)}catch(e){}
+  if(ws.readyState===1)ws.send(JSON.stringify(f)); prune();
+}
+let ws;
+function connect(){
+  ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+  ws.onopen=()=>ws.send(JSON.stringify(filter()));
+  ws.onmessage=e=>JSON.parse(e.data).forEach(draw);
+  ws.onclose=()=>setTimeout(connect,3000);
+}
+connect();
+["band","mode","mins"].forEach(i=>$(i).onchange=reload);
+let tm;$("call").oninput=()=>{clearTimeout(tm);tm=setTimeout(reload,400)};
+setInterval(prune,5000); reload();
+</script>
+</body>
+</html>
