@@ -1,4 +1,4 @@
-"""Live PSK Reporter map backend: MQTT -> SQLite buffer -> WebSocket -> browser.
+"""Live PSK Reporter map backend: MQTT -> SQLite (newest spot per station pair and band) -> WebSocket -> browser.
 
 Run:  uvicorn server:app --host 127.0.0.1 --port 8000
 Config via env vars (see below).
@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 HOST = os.getenv("MQTT_HOST", "mqtt.pskreporter.info")
 PORT = int(os.getenv("MQTT_PORT", "1884"))                 # 1883 TCP, 1884 TLS
 TOPIC = os.getenv("PSKR_TOPIC", "pskr/filter/v2/+/FT8/#")  # narrow this to cut load
-TTL = int(os.getenv("TTL_MINUTES", "60")) * 60             # how long spots are kept
+TTL = int(os.getenv("TTL_MINUTES", "1440")) * 60           # how long paths are kept (24 h)
 DB = os.getenv("DB_PATH", "spots.db")
 MAX_PUSH = 300                                             # max spots per push per client
 
@@ -30,7 +30,7 @@ def parse(payload: bytes):
         d = json.loads(payload)
         if not (d.get("sl") and d.get("rl")):
             return None
-        return {"t": int(d["t"]), "b": d.get("b"), "md": d.get("md"), "f": d.get("f"),
+        return {"t": int(d["t"]), "b": d.get("b") or "", "md": d.get("md") or "", "f": d.get("f"),
                 "snr": d.get("rp"), "sc": d["sc"], "sl": d["sl"], "rc": d["rc"], "rl": d["rl"]}
     except (ValueError, KeyError, TypeError):
         return None
@@ -63,6 +63,15 @@ async def ingest():
             await asyncio.sleep(5)
 
 
+# One row per (sender, receiver, band, mode): repeat spots update the row instead of piling up,
+# which keeps 24 hours of the whole feed small. `best` remembers the strongest SNR seen.
+UPSERT = """INSERT INTO paths(t,b,md,f,snr,best,sc,sl,rc,rl)
+VALUES(:t,:b,:md,:f,:snr,:snr,:sc,:sl,:rc,:rl)
+ON CONFLICT(sc,rc,b,md) DO UPDATE SET t=excluded.t,f=excluded.f,snr=excluded.snr,sl=excluded.sl,rl=excluded.rl,
+best=CASE WHEN excluded.snr IS NULL THEN paths.best WHEN paths.best IS NULL THEN excluded.snr
+          ELSE MAX(paths.best,excluded.snr) END"""
+
+
 async def writer():
     async with aiosqlite.connect(DB) as db:
         last_prune = 0
@@ -72,8 +81,7 @@ async def writer():
             while not queue.empty() and len(batch) < 20_000:
                 batch.append(queue.get_nowait())
             if batch:
-                await db.executemany(
-                    "INSERT INTO spots VALUES (:t,:b,:md,:f,:snr,:sc,:sl,:rc,:rl)", batch)
+                await db.executemany(UPSERT, batch)
                 await db.commit()
                 for ws, flt in list(clients.items()):
                     out = [s for s in batch if matches(s, flt)][-MAX_PUSH:]
@@ -81,7 +89,7 @@ async def writer():
                         try: await ws.send_text(json.dumps(out))
                         except Exception: clients.pop(ws, None)
             if time.time() - last_prune > 60:
-                await db.execute("DELETE FROM spots WHERE t < ?", (int(time.time()) - TTL,))
+                await db.execute("DELETE FROM paths WHERE t < ?", (int(time.time()) - TTL,))
                 await db.commit()
                 last_prune = time.time()
 
@@ -90,9 +98,10 @@ async def writer():
 async def lifespan(app):
     async with aiosqlite.connect(DB) as db:
         await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute("CREATE TABLE IF NOT EXISTS spots(t INT,b TEXT,md TEXT,f INT,snr INT,"
-                         "sc TEXT,sl TEXT,rc TEXT,rl TEXT)")
-        await db.execute("CREATE INDEX IF NOT EXISTS i_t ON spots(t)")
+        await db.execute("DROP TABLE IF EXISTS spots")  # old per-spot table from earlier versions
+        await db.execute("CREATE TABLE IF NOT EXISTS paths(t INT,b TEXT,md TEXT,f INT,snr INT,best INT,"
+                         "sc TEXT,sl TEXT,rc TEXT,rl TEXT,PRIMARY KEY(sc,rc,b,md)) WITHOUT ROWID")
+        await db.execute("CREATE INDEX IF NOT EXISTS i_t ON paths(t)")
         await db.commit()
     tasks = [asyncio.create_task(ingest()), asyncio.create_task(writer())]
     yield
@@ -104,7 +113,7 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/api/spots")
 async def spots(band: str = "", mode: str = "", call: str = "", dir: str = "", minutes: int = 15, limit: int = 1500):
-    q, args = "SELECT t,b,md,f,snr,sc,sl,rc,rl FROM spots WHERE t > ?", [int(time.time()) - min(minutes, TTL // 60) * 60]
+    q, args = "SELECT t,b,md,f,snr,best,sc,sl,rc,rl FROM paths WHERE t > ?", [int(time.time()) - min(minutes, TTL // 60) * 60]
     if band: q += " AND b=?"; args.append(band)
     if mode: q += " AND md=?"; args.append(mode)
     if call:
@@ -115,7 +124,7 @@ async def spots(band: str = "", mode: str = "", call: str = "", dir: str = "", m
     q += " ORDER BY t DESC LIMIT ?"; args.append(min(limit, 5000))
     async with aiosqlite.connect(DB) as db:
         rows = await (await db.execute(q, args)).fetchall()
-    keys = ("t", "b", "md", "f", "snr", "sc", "sl", "rc", "rl")
+    keys = ("t", "b", "md", "f", "snr", "best", "sc", "sl", "rc", "rl")
     return [dict(zip(keys, r)) for r in rows]
 
 

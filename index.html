@@ -99,8 +99,8 @@ select,input:not([type=checkbox]){font-size:16px;min-height:44px}
   <label>Direction (needs a callsign)
     <select id="dir"><option value="tx">Stations that hear me</option><option value="rx">Stations I hear</option><option value="">Both</option></select></label>
   <label>Show last
-    <select id="mins"><option value="5">5 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
-  <label class="chk full"><input type="checkbox" id="labels" checked> Show SNR labels at receivers</label>
+    <select id="mins"><option value="5">5 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option><option value="180">3 hours</option><option value="360">6 hours</option><option value="720">12 hours</option><option value="1440">24 hours</option></select></label>
+  <label class="chk full"><input type="checkbox" id="labels" checked> <span id="lbltxt">Show SNR labels at receivers</span></label>
   <div id="keywrap" class="full"><h2>Band colours (click to filter)</h2><div id="key"></div></div>
   <div id="stats" class="full">
   <h2>Highlights for these filters</h2>
@@ -163,11 +163,12 @@ function km(a,b){
   const h=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dn/2)**2;
   return 12742*Math.asin(Math.sqrt(h));
 }
+const bv=e=>e.s.best!=null?e.s.best:e.s.snr;
 function stats(){
   let best=null,far=null;const calls=new Set();
   for(const e of drawn){
     calls.add(e.s.sc);calls.add(e.s.rc);
-    if(e.s.snr!=null&&(!best||e.s.snr>best.snr))best=e.s;
+    if(bv(e)!=null&&(!best||bv(best)<bv(e)))best=e;
     if(!far||e.d>far.d)far=e;
   }
   const set=(id,main,sub)=>{ // textContent only: callsigns come from the network
@@ -176,7 +177,7 @@ function stats(){
     const b=document.createElement("b"),s=document.createElement("span");
     b.textContent=main;s.textContent=sub;el.append(b,s);
   };
-  set("s-snr",best&&(best.snr>0?"+":"")+best.snr+" dB",best&&best.sc+" to "+best.rc+(best.b?", "+best.b:""));
+  set("s-snr",best&&(bv(best)>0?"+":"")+bv(best)+" dB",best&&best.s.sc+" to "+best.s.rc+(best.s.b?", "+best.s.b:""));
   set("s-far",far&&Math.round(far.d).toLocaleString()+" km ("+Math.round(far.d*0.621371).toLocaleString()+" mi)",
       far&&far.s.sc+" to "+far.s.rc+(far.s.b?", "+far.s.b:""));
   set("s-st",calls.size?calls.size.toLocaleString():"",calls.size?"in "+drawn.length.toLocaleString()+" paths":"");
@@ -197,7 +198,7 @@ function brg(a,b){
   return (Math.atan2(Math.sin(dl)*Math.cos(p2),Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl))/r+360)%360;
 }
 const age=t=>{const m=Math.floor((Date.now()/1000-t)/60);return m<1?"now":m<120?m+"m":Math.floor(m/60)+"h"};
-const LABEL_MAX=250;let labelsOn=false;
+const LABEL_MAX=300;let labelsOn=false;const idx=new Map();
 function labText(e){if(!e.labEl)return;e.labEl.textContent=age(e.s.t)+" "+(e.s.snr!=null?(e.s.snr>0?"+":"")+e.s.snr+"dB":"?")}
 function showLab(e){
   if(!e.lab){
@@ -223,20 +224,30 @@ function tip(s,d,br,rxm){ // DOM + textContent only: callsigns come from the net
   row((rxm?"Heard by ":"Heard ")+o.by+" ("+o.bg+")");
   row([s.b,s.md,s.f?(s.f/1e6).toFixed(3)+" MHz":null].filter(Boolean).join(", "));
   row(Math.round(d).toLocaleString()+" km ("+Math.round(d*0.621371).toLocaleString()+" mi), bearing "+Math.round(br)+"°","tip-dim");
-  row(new Date(s.t*1000).toISOString().slice(11,16)+" UTC","tip-dim");
+  row(new Date(s.t*1000).toISOString().slice(0,16).replace("T"," ")+" UTC","tip-dim");
   return el;
 }
 function draw(s){
   const a=grid(s.sl),b=grid(s.rl); if(!a||!b)return;
+  const key=s.sc+"|"+s.rc+"|"+s.b+"|"+(s.md||""), old=idx.get(key);
+  if(old){ // same station pair on the same band: keep one path, show the newest report
+    if(s.t<=old.t)return;
+    const pb=old.s.best!=null?old.s.best:old.s.snr; // keep the strongest SNR seen
+    s.best=(pb!=null&&(s.snr==null||pb>s.snr))?pb:s.snr;
+    old.s=s;old.t=s.t;
+    drawn.splice(drawn.indexOf(old),1);drawn.push(old);
+    if(old.labEl)labText(old);
+    return;
+  }
   const pts=arc(a,b),c=bandColor(s.b),d=km(a,b),br=brg(a,b),rxm=isRx(s),end=rxm?pts[0]:pts[pts.length-1];
   const line=L.polyline(pts,{color:c,weight:1.4,opacity:.6,interactive:false}).addTo(layer);
   const dot=L.circleMarker(end,{radius:3.5,color:"#0f2530",weight:1,fillColor:c,fillOpacity:.95}).addTo(layer);
-  dot.bindTooltip(()=>tip(s,d,br,rxm),{direction:"top",offset:[0,-4],opacity:1});
-  const e={t:s.t,line,dot,s,d,br,end,c,rxm};
-  drawn.push(e); total++;
+  const e={t:s.t,line,dot,s,d,br,end,c,rxm,key};
+  dot.bindTooltip(()=>tip(e.s,e.d,e.br,e.rxm),{direction:"top",offset:[0,-4],opacity:1});
+  idx.set(key,e);drawn.push(e); total++;
   if(labelsOn&&drawn.length<=LABEL_MAX)showLab(e);
 }
-function drop(){const e=drawn.shift();layer.removeLayer(e.line);layer.removeLayer(e.dot);hideLab(e)}
+function drop(){const e=drawn.shift();idx.delete(e.key);layer.removeLayer(e.line);layer.removeLayer(e.dot);hideLab(e)}
 function prune(){
   const cut=Date.now()/1000-(+$("mins").value)*60;
   while(drawn.length&&drawn[0].t<cut)drop();
@@ -246,12 +257,14 @@ function prune(){
   else if(labelsOn)drawn.forEach(labText);
   stats();
   $("mstatus").textContent=drawn.length.toLocaleString()+" paths";
-  const hint=$("labels").checked&&!want?" (SNR labels show at "+LABEL_MAX+" paths or fewer; try a band or callsign filter)":"";
+  const tooMany=$("labels").checked&&!want;
+  $("lbltxt").textContent="Show SNR labels at receivers"+(tooMany?" (hidden: over "+LABEL_MAX+" paths, pick a band or a shorter time)":"");
+  const hint="";
   $("status").innerHTML=`<b>${drawn.length.toLocaleString()}</b> paths shown`+hint+(ws.readyState===1?"":" (reconnecting…)");
 }
 async function reload(){
-  layer.clearLayers();drawn=[];labelsOn=false;syncKey();
-  const f=filter(),q=new URLSearchParams({...f,minutes:$("mins").value,limit:3000});
+  layer.clearLayers();drawn=[];idx.clear();labelsOn=false;syncKey();
+  const f=filter(),q=new URLSearchParams({...f,minutes:$("mins").value,limit:5000});
   try{(await (await fetch("/api/spots?"+q)).json()).reverse().forEach(draw)}catch(e){}
   if(ws.readyState===1)ws.send(JSON.stringify(f)); prune();
 }
